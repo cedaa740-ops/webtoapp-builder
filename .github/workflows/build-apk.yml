@@ -96,6 +96,21 @@ jobs:
                   '        }\n'
                   '        return super.onKeyDown(keyCode, event);\n'
                   '    }\n'
+                  '\n    @Override\n'
+                  '    public void onStart() {\n'
+                  '        super.onStart();\n'
+                  '        try {\n'
+                  '            android.webkit.WebView wv = this.bridge.getWebView();\n'
+                  '            if (wv != null) {\n'
+                  '                wv.setLongClickable(false);\n'
+                  '                wv.setHapticFeedbackEnabled(false);\n'
+                  '                wv.setOnLongClickListener(new android.view.View.OnLongClickListener() {\n'
+                  '                    @Override public boolean onLongClick(android.view.View v) { return true; }\n'
+                  '                });\n'
+                  '                wv.getSettings().setTextZoom(100);\n'
+                  '            }\n'
+                  '        } catch (Exception e) {}\n'
+                  '    }\n'
               )
               # Insert before the final closing brace of the class
               m2 = re.sub(r'\}\s*\Z', inject + '}\n', m, count=1)
