@@ -9,6 +9,7 @@ on:
       orientation: { required: true, type: string }
       fullscreen: { required: true, type: string }
       tv_support: { required: true, type: string }
+      icon_url: { required: false, type: string, default: '' }
       callback_url: { required: true, type: string }
       callback_secret: { required: true, type: string }
 
@@ -45,7 +46,7 @@ jobs:
           TV_SUPPORT: ${{ inputs.tv_support }}
         run: |
           python3 <<'PY'
-          import os, re
+          import os, re, glob
           path = 'android/app/src/main/AndroidManifest.xml'
           with open(path) as f: x = f.read()
 
@@ -58,7 +59,6 @@ jobs:
           x = re.sub(r'android:screenOrientation="[^"]*"', f'android:screenOrientation="{orient}"', x)
 
           if tv:
-              # 1) uses-feature tags before <application>
               if 'android.software.leanback' not in x:
                   features = (
                       '    <uses-feature android:name="android.software.leanback" android:required="false" />\n'
@@ -66,12 +66,8 @@ jobs:
                       '    <uses-feature android:name="android.hardware.faketouch" android:required="false" />\n'
                   )
                   x = x.replace('<application ', features + '    <application ', 1)
-
-              # 2) android:banner attribute on <application>
               if 'android:banner=' not in x:
                   x = x.replace('<application ', '<application android:banner="@mipmap/ic_launcher" ', 1)
-
-              # 3) LEANBACK_LAUNCHER intent-filter inside MainActivity (add a sibling to the existing LAUNCHER intent-filter)
               if 'LEANBACK_LAUNCHER' not in x:
                   leanback = (
                       '<intent-filter>\n'
@@ -80,13 +76,57 @@ jobs:
                       '            </intent-filter>\n'
                       '            <intent-filter>'
                   )
-                  # Insert before the existing LAUNCHER intent-filter
                   x = re.sub(r'<intent-filter>(?=\s*<action android:name="android\.intent\.action\.MAIN"\s*/>\s*<category android:name="android\.intent\.category\.LAUNCHER")',
                              leanback, x, count=1)
 
           with open(path, 'w') as f: f.write(x)
-          print(x)
+
+          # Override back button: WebView goes back instead of exiting app
+          mains = glob.glob('android/app/src/main/java/**/MainActivity.java', recursive=True)
+          for mp in mains:
+              with open(mp) as f: m = f.read()
+              if 'onKeyDown' in m:
+                  continue
+              inject = (
+                  '\n    @Override\n'
+                  '    public boolean onKeyDown(int keyCode, android.view.KeyEvent event) {\n'
+                  '        if (keyCode == android.view.KeyEvent.KEYCODE_BACK) {\n'
+                  '            android.webkit.WebView wv = this.bridge.getWebView();\n'
+                  '            if (wv != null && wv.canGoBack()) { wv.goBack(); return true; }\n'
+                  '        }\n'
+                  '        return super.onKeyDown(keyCode, event);\n'
+                  '    }\n'
+              )
+              # Insert before the final closing brace of the class
+              m2 = re.sub(r'\}\s*\Z', inject + '}\n', m, count=1)
+              with open(mp, 'w') as f: f.write(m2)
+              print('Patched back button in', mp)
           PY
+
+      - name: Apply custom icon
+        if: inputs.icon_url != ''
+        env:
+          ICON_URL: ${{ inputs.icon_url }}
+        run: |
+          set -e
+          sudo apt-get update -qq && sudo apt-get install -y -qq imagemagick
+          curl -sSL "$ICON_URL" -o /tmp/icon-src
+          # Normalize to square PNG
+          convert /tmp/icon-src -resize 512x512^ -gravity center -extent 512x512 /tmp/icon.png
+          declare -A SIZES=( [mdpi]=48 [hdpi]=72 [xhdpi]=96 [xxhdpi]=144 [xxxhdpi]=192 )
+          for d in "${!SIZES[@]}"; do
+            sz=${SIZES[$d]}
+            dir="android/app/src/main/res/mipmap-$d"
+            mkdir -p "$dir"
+            convert /tmp/icon.png -resize ${sz}x${sz} "$dir/ic_launcher.png"
+            convert /tmp/icon.png -resize ${sz}x${sz} \
+              \( +clone -threshold -1 -negate -fill white -draw "circle $((sz/2)),$((sz/2)) $((sz/2)),0" \) \
+              -alpha off -compose CopyOpacity -composite "$dir/ic_launcher_round.png"
+            # Foreground for adaptive icon (108dp)
+            fsz=$((sz * 108 / 48))
+            convert /tmp/icon.png -resize ${fsz}x${fsz} "$dir/ic_launcher_foreground.png" 2>/dev/null || true
+          done
+          echo "Icon applied."
 
       - name: Build APK
         working-directory: android
