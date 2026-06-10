@@ -11,7 +11,17 @@ const config = {
   appId: APP_ID,
   appName: APP_NAME,
   webDir: 'www',
-  server: { url: SITE_URL, cleartext: true, androidScheme: 'https' },
+  server: {
+    url: SITE_URL,
+    cleartext: true,
+    androidScheme: 'https',
+    allowNavigation: ['*'],
+  },
+  android: {
+    allowMixedContent: true,
+    captureInput: true,
+    webContentsDebuggingEnabled: false,
+  },
 };
 fs.writeFileSync('capacitor.config.json', JSON.stringify(config, null, 2));
 
