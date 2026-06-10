@@ -1,0 +1,13 @@
+{
+  "appId": "com.placeholder.app",
+  "appName": "PlaceholderApp",
+  "webDir": "www",
+  "server": {
+    "url": "https://example.com",
+    "cleartext": true,
+    "androidScheme": "https"
+  },
+  "android": {
+    "allowMixedContent": true
+  }
+}
