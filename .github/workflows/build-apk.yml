@@ -39,20 +39,54 @@ jobs:
           npx cap sync android
 
       - name: Apply Android customizations
+        env:
+          FULLSCREEN: ${{ inputs.fullscreen }}
+          ORIENTATION: ${{ inputs.orientation }}
+          TV_SUPPORT: ${{ inputs.tv_support }}
         run: |
-          MANIFEST=android/app/src/main/AndroidManifest.xml
-          if [ "${{ inputs.fullscreen }}" = "true" ]; then
-            sed -i 's|android:theme="[^"]*"|android:theme="@android:style/Theme.NoTitleBar.Fullscreen"|g' $MANIFEST || true
-          fi
-          sed -i "s|android:screenOrientation=\"[^\"]*\"|android:screenOrientation=\"${{ inputs.orientation }}\"|g" $MANIFEST || true
-          if [ "${{ inputs.tv_support }}" = "true" ]; then
-            if ! grep -q 'android.software.leanback' $MANIFEST; then
-              sed -i '0,/<application /s|<application |<uses-feature android:name="android.software.leanback" android:required="false"/>\n    <uses-feature android:name="android.hardware.touchscreen" android:required="false"/>\n    <application |' $MANIFEST
-            fi
-            if ! grep -q 'android:banner=' $MANIFEST; then
-              sed -i '0,/<application /s|<application |<application android:banner="@mipmap/ic_launcher" |' $MANIFEST
-            fi
-          fi
+          python3 <<'PY'
+          import os, re
+          path = 'android/app/src/main/AndroidManifest.xml'
+          with open(path) as f: x = f.read()
+
+          fullscreen = os.environ['FULLSCREEN'] == 'true'
+          tv = os.environ['TV_SUPPORT'] == 'true'
+          orient = os.environ['ORIENTATION']
+
+          if fullscreen:
+              x = re.sub(r'android:theme="[^"]*"', 'android:theme="@android:style/Theme.NoTitleBar.Fullscreen"', x, count=1)
+          x = re.sub(r'android:screenOrientation="[^"]*"', f'android:screenOrientation="{orient}"', x)
+
+          if tv:
+              # 1) uses-feature tags before <application>
+              if 'android.software.leanback' not in x:
+                  features = (
+                      '    <uses-feature android:name="android.software.leanback" android:required="false" />\n'
+                      '    <uses-feature android:name="android.hardware.touchscreen" android:required="false" />\n'
+                      '    <uses-feature android:name="android.hardware.faketouch" android:required="false" />\n'
+                  )
+                  x = x.replace('<application ', features + '    <application ', 1)
+
+              # 2) android:banner attribute on <application>
+              if 'android:banner=' not in x:
+                  x = x.replace('<application ', '<application android:banner="@mipmap/ic_launcher" ', 1)
+
+              # 3) LEANBACK_LAUNCHER intent-filter inside MainActivity (add a sibling to the existing LAUNCHER intent-filter)
+              if 'LEANBACK_LAUNCHER' not in x:
+                  leanback = (
+                      '<intent-filter>\n'
+                      '                <action android:name="android.intent.action.MAIN" />\n'
+                      '                <category android:name="android.intent.category.LEANBACK_LAUNCHER" />\n'
+                      '            </intent-filter>\n'
+                      '            <intent-filter>'
+                  )
+                  # Insert before the existing LAUNCHER intent-filter
+                  x = re.sub(r'<intent-filter>(?=\s*<action android:name="android\.intent\.action\.MAIN"\s*/>\s*<category android:name="android\.intent\.category\.LAUNCHER")',
+                             leanback, x, count=1)
+
+          with open(path, 'w') as f: f.write(x)
+          print(x)
+          PY
 
       - name: Build APK
         working-directory: android
