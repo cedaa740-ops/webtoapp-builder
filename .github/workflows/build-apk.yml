@@ -46,13 +46,20 @@ jobs:
           fi
           sed -i "s|android:screenOrientation=\"[^\"]*\"|android:screenOrientation=\"${{ inputs.orientation }}\"|g" $MANIFEST || true
           if [ "${{ inputs.tv_support }}" = "true" ]; then
-            sed -i 's|<application |<application android:banner="@mipmap/ic_launcher" |' $MANIFEST
-            sed -i 's|</application>|<uses-feature android:name="android.software.leanback" android:required="false"/><uses-feature android:name="android.hardware.touchscreen" android:required="false"/></application>|' $MANIFEST
+            if ! grep -q 'android.software.leanback' $MANIFEST; then
+              sed -i '0,/<application /s|<application |<uses-feature android:name="android.software.leanback" android:required="false"/>\n    <uses-feature android:name="android.hardware.touchscreen" android:required="false"/>\n    <application |' $MANIFEST
+            fi
+            if ! grep -q 'android:banner=' $MANIFEST; then
+              sed -i '0,/<application /s|<application |<application android:banner="@mipmap/ic_launcher" |' $MANIFEST
+            fi
           fi
 
       - name: Build APK
         working-directory: android
-        run: ./gradlew assembleDebug
+        shell: bash
+        run: |
+          set -o pipefail
+          ./gradlew assembleDebug 2>&1 | tee ../build.log
 
       - name: Upload APK to callback
         run: |
@@ -64,9 +71,11 @@ jobs:
 
       - name: Notify failure
         if: failure()
+        shell: bash
         run: |
+          MESSAGE="$(tail -n 80 build.log 2>/dev/null || echo 'Build failed - check Actions logs')"
           curl -X POST "${{ inputs.callback_url }}" \
             -H "x-callback-secret: ${{ inputs.callback_secret }}" \
             -H "x-build-id: ${{ inputs.build_id }}" \
             -H "x-status: failed" \
-            -d "Build failed - check Actions logs"
+            --data-binary "$MESSAGE"
